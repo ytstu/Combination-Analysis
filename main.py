@@ -16,8 +16,6 @@ PROCESS_COLUMNS = [
     "倍数前",
     "倍数后",
     "组合商品名称",
-    "临时名称",
-    "提取后",
 ]
 
 
@@ -103,13 +101,6 @@ class ExcelDataService:
             values = base_codes.map(product_lookup[column_name])
             return values.where(values.notna(), "").astype(str)
 
-        temp_names = get_product_text("商品名称")
-        df["临时名称"] = temp_names
-        df["提取后"] = temp_names.str.extract(
-            r"([^\d\u0030-\u0039]*)$",
-            expand=False,
-        ).fillna("")
-
         size_values = get_product_text("尺寸规格(mm)")
         color_values = get_product_text("颜色")
         if has_quantity_column:
@@ -143,9 +134,8 @@ class ExcelDataService:
             )
         ]
         df["组合商品名称"] = [
-            "" if pcs is None else f"{temp_name}{size}{pcs}{color}"
-            for temp_name, size, pcs, color in zip(
-                temp_names.tolist(),
+            "" if pcs is None else f"{size}{pcs}{color}"
+            for size, pcs, color in zip(
                 size_values.tolist(),
                 pcs_values,
                 color_values.tolist(),
