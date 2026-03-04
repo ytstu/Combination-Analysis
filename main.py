@@ -8,12 +8,10 @@ from pathlib import Path
 
 import pandas as pd
 
-DEFAULT_PRODUCT_DB_PATH = (
-    r"\\Desktop-inv4qoc\图片数据\Temu_半托项目组\倒表格\数据\组合分析\商品资料.xlsx"
-)
-DEFAULT_COMBO_DB_PATH = (
-    r"\\Desktop-inv4qoc\图片数据\Temu_半托项目组\倒表格\数据\组合分析\组合资料.xlsx"
-)
+BASE_DIR = Path(__file__).resolve().parent
+DEFAULT_DATA_DIR = BASE_DIR / "data" / "input"
+DEFAULT_PRODUCT_DB_PATH = DEFAULT_DATA_DIR / "商品资料.xlsx"
+DEFAULT_COMBO_DB_PATH = DEFAULT_DATA_DIR / "组合资料.xlsx"
 PROCESS_COLUMNS = [
     "单品是否存在",
     "组合是否存在",
@@ -28,8 +26,16 @@ PROCESS_COLUMNS = [
 class ExcelDataService:
 
     def __init__(self, product_db_path=None, combo_db_path=None):
-        self.product_db_path = product_db_path or DEFAULT_PRODUCT_DB_PATH
-        self.combo_db_path = combo_db_path or DEFAULT_COMBO_DB_PATH
+        self.product_db_path = (
+            resolve_project_path(product_db_path)
+            if product_db_path
+            else DEFAULT_PRODUCT_DB_PATH
+        )
+        self.combo_db_path = (
+            resolve_project_path(combo_db_path)
+            if combo_db_path
+            else DEFAULT_COMBO_DB_PATH
+        )
         self.product_df = None
         self.combo_df = None
 
@@ -189,6 +195,13 @@ def parse_args():
     return parser.parse_args()
 
 
+def resolve_project_path(path_value):
+    path = Path(path_value)
+    if path.is_absolute():
+        return path
+    return BASE_DIR / path
+
+
 def resolve_output_path(output_arg, input_path):
     if output_arg:
         output_path = Path(output_arg)
@@ -203,7 +216,7 @@ def resolve_output_path(output_arg, input_path):
 
 def run():
     args = parse_args()
-    input_path = Path(args.input)
+    input_path = resolve_project_path(args.input)
     if not input_path.exists():
         raise FileNotFoundError(f"输入文件不存在: {input_path}")
 
