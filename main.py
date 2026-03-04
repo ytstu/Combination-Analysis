@@ -1,4 +1,3 @@
-import argparse
 import math
 from datetime import datetime
 from pathlib import Path
@@ -8,6 +7,7 @@ import pandas as pd
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_DATA_DIR = BASE_DIR / "data" / "input"
 DEFAULT_OUTPUT_DIR = BASE_DIR / "data" / "output"
+DEFAULT_INPUT_FILE_PATH = DEFAULT_DATA_DIR / "模拟-i输入-讲解.xlsx"
 DEFAULT_PRODUCT_DB_PATH = DEFAULT_DATA_DIR / "商品资料.xlsx"
 DEFAULT_COMBO_DB_PATH = DEFAULT_DATA_DIR / "组合资料.xlsx"
 PROCESS_COLUMNS = [
@@ -55,10 +55,7 @@ class ExcelDataService:
         self.combo_df = self._load_database(self.combo_db_path)
 
     def load_input_file(self, file_path):
-        df = pd.read_excel(file_path)
-        if "原始商品编码" not in df.columns:
-            raise ValueError("文件中没有找到'原始商品编码'字段")
-        return df
+        return pd.read_excel(file_path)
 
     def process_data(self, input_df):
         df = input_df.copy().drop_duplicates(subset=["原始商品编码"])
@@ -168,33 +165,16 @@ class ExcelDataService:
         )
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="组合装拆解分析后端程序")
-    parser.add_argument("-i", "--input", required=True, help="待处理的 Excel 文件路径")
-    return parser.parse_args()
-
-
-def resolve_project_path(path_value):
-    path = Path(path_value)
-    if path.is_absolute():
-        return path
-    return BASE_DIR / path
-
-
 def resolve_output_path():
     return DEFAULT_OUTPUT_DIR / f"组合装数据{datetime.now().strftime('%m%d')}.xlsx"
 
 
 def run():
-    args = parse_args()
-    input_path = resolve_project_path(args.input)
-    if not input_path.exists():
-        raise FileNotFoundError(f"输入文件不存在: {input_path}")
-
+    input_path = DEFAULT_INPUT_FILE_PATH
     service = ExcelDataService()
 
     service.load_databases()
-    input_df = service.load_input_file(str(input_path))
+    input_df = service.load_input_file(input_path)
     processed_df = service.process_data(input_df)
     export_df = service.build_export_df(processed_df)
     output_path = resolve_output_path()
