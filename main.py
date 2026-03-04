@@ -1,7 +1,5 @@
 import argparse
 import math
-import os
-import re
 from datetime import datetime
 from pathlib import Path
 
@@ -32,42 +30,17 @@ class ExcelDataService:
         self.combo_df = None
 
     @staticmethod
-    def _get_first_row(value):
-        if isinstance(value, pd.DataFrame):
-            return value.iloc[0]
-        return value
-
-    @staticmethod
     def _string_or_empty(value):
         return str(value) if pd.notna(value) else ""
 
-    def _load_database(self, file_path, label):
-        result = {"loaded": False, "message": f"{label}: 未加载", "count": 0}
-        if not os.path.exists(file_path):
-            result["message"] = f"{label}: 文件不存在"
-            return None, result
-
-        dataframe = pd.read_excel(file_path)
-        count = len(dataframe)
-        result["loaded"] = True
-        result["message"] = f"{label}: 已加载 ({count} 条记录)"
-        result["count"] = count
-        return dataframe, result
+    def _load_database(self, file_path):
+        if not file_path.exists():
+            return None
+        return pd.read_excel(file_path)
 
     def load_databases(self):
-        self.product_df, product_result = self._load_database(
-            self.product_db_path,
-            "商品资料库",
-        )
-        self.combo_df, combo_result = self._load_database(
-            self.combo_db_path,
-            "组合资料库",
-        )
-        return {
-            "product": product_result,
-            "combo": combo_result,
-            "all_loaded": bool(product_result["loaded"] and combo_result["loaded"]),
-        }
+        self.product_df = self._load_database(self.product_db_path)
+        self.combo_df = self._load_database(self.combo_db_path)
 
     def load_input_file(self, file_path):
         df = pd.read_excel(file_path)
@@ -89,62 +62,65 @@ class ExcelDataService:
             df[column] = ""
 
         source_codes = df["原始商品编码"].astype(str)
-        product_codes = set(self.product_df["商品编码"].astype(str))
-        combo_codes = set(self.combo_df["组合商品编码"].astype(str))
+        product_lookup = self.product_df.copy()
+        product_lookup["商品编码"] = product_lookup["商品编码"].astype(str)
+        product_lookup = product_lookup.drop_duplicates(
+            subset=["商品编码"],
+            keep="first",
+        ).set_index("商品编码")
 
-        df["单品是否存在"] = source_codes.apply(
-            lambda code: "存在" if code in product_codes else ""
-        )
-        df["组合是否存在"] = source_codes.apply(
-            lambda code: "存在" if code in combo_codes else ""
-        )
+        product_codes = product_lookup.index
+        combo_codes = self.combo_df["组合商品编码"].astype(str)
 
-        missing_mask = (df["单品是否存在"] != "存在") & (df["组合是否存在"] != "存在")
+        product_exists = source_codes.isin(product_codes)
+        combo_exists = source_codes.isin(combo_codes)
+
+        df["单品是否存在"] = product_exists.map({True: "存在", False: ""})
+        df["组合是否存在"] = combo_exists.map({True: "存在", False: ""})
+
+        missing_mask = ~product_exists & ~combo_exists
         df = df[missing_mask].copy()
+        if df.empty:
+            return df
 
-        code_parts = (
-            df["原始商品编码"].astype(str).apply(lambda code: code.rsplit("*", 1))
-        )
-        df["倍数前"] = code_parts.str[0]
-        df["倍数后"] = code_parts.str[1].fillna("")
+        code_parts = df["原始商品编码"].astype(str).str.rsplit("*", n=1, expand=True)
+        df["倍数前"] = code_parts[0]
+        df["倍数后"] = code_parts[1].fillna("")
 
-        product_index = self.product_df.copy()
-        product_index["商品编码"] = product_index["商品编码"].astype(str)
-        product_index = product_index.set_index("商品编码", drop=False)
+        base_codes = df["倍数前"]
+        has_product = base_codes.isin(product_codes)
+        has_quantity_column = "数量(pcs)" in product_lookup.columns
 
-        def get_product_item(code):
-            if not code or code not in product_index.index:
-                return None
-            return self._get_first_row(product_index.loc[code])
+        def get_product_text(column_name):
+            if column_name not in product_lookup.columns:
+                return pd.Series("", index=df.index, dtype="object")
 
-        def get_item_text(item, column):
-            if item is None or column not in item.index:
-                return ""
-            return self._string_or_empty(item[column])
+            values = base_codes.map(product_lookup[column_name])
+            return values.where(values.notna(), "").astype(str)
 
-        def find_product_name(code):
-            return get_item_text(get_product_item(code), "商品名称")
+        temp_names = get_product_text("商品名称")
+        df["临时名称"] = temp_names
+        df["提取后"] = temp_names.str.extract(
+            r"([^\d\u0030-\u0039]*)$",
+            expand=False,
+        ).fillna("")
 
-        df["临时名称"] = df["倍数前"].apply(find_product_name)
+        size_values = get_product_text("尺寸规格(mm)")
+        color_values = get_product_text("颜色")
+        if has_quantity_column:
+            quantity_values = base_codes.map(product_lookup["数量(pcs)"])
+        else:
+            quantity_values = pd.Series(None, index=df.index, dtype="object")
 
-        def extract_chinese(text):
-            if not isinstance(text, str):
-                return ""
-            match = re.search(r"[^\d\u0030-\u0039]*$", text)
-            if match:
-                return match.group()
-            return text
-
-        df["提取后"] = df["临时名称"].apply(extract_chinese)
-
-        def calculate_pcs(item, multiple):
-            if item is None or "数量(pcs)" not in item.index:
+        def calculate_pcs_value(found_product, quantity, multiple):
+            if not found_product or not has_quantity_column:
                 return ""
 
-            pcs_str = self._string_or_empty(item["数量(pcs)"])
+            pcs_str = self._string_or_empty(quantity)
+            multiple_str = self._string_or_empty(multiple)
             try:
                 pcs_value = float(pcs_str) if pcs_str else 0
-                multiple_value = float(multiple) if multiple else 0
+                multiple_value = float(multiple_str) if multiple_str else 0
             except (TypeError, ValueError):
                 return ""
 
@@ -153,17 +129,25 @@ class ExcelDataService:
                 return None
             return str(int(total_pcs))
 
-        def create_combo_name(row):
-            item = get_product_item(str(row["倍数前"]))
-            temp_name = self._string_or_empty(row["临时名称"])
-            size = get_item_text(item, "尺寸规格(mm)")
-            pcs = calculate_pcs(item, row["倍数后"])
-            if pcs is None:
-                return ""
-            color = get_item_text(item, "颜色")
-            return f"{temp_name}{size}{pcs}{color}"
-
-        df["组合商品名称"] = df.apply(create_combo_name, axis=1)
+        pcs_values = [
+            calculate_pcs_value(found_product, quantity, multiple)
+            for found_product, quantity, multiple in zip(
+                has_product.tolist(),
+                quantity_values.tolist(),
+                df["倍数后"].tolist(),
+            )
+        ]
+        df["组合商品名称"] = [
+            ""
+            if pcs is None
+            else f"{temp_name}{size}{pcs}{color}"
+            for temp_name, size, pcs, color in zip(
+                temp_names.tolist(),
+                size_values.tolist(),
+                pcs_values,
+                color_values.tolist(),
+            )
+        ]
         return df
 
     @staticmethod
@@ -203,10 +187,7 @@ def run():
 
     service = ExcelDataService()
 
-    db_status = service.load_databases()
-    if not db_status["all_loaded"]:
-        raise RuntimeError("数据库未完整加载，请检查路径后重试")
-
+    service.load_databases()
     input_df = service.load_input_file(str(input_path))
     processed_df = service.process_data(input_df)
     export_df = service.build_export_df(processed_df)
