@@ -1,12 +1,11 @@
-import math
 from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
 
-BASE_DIR = Path(__file__).resolve().parent
-DEFAULT_DATA_DIR = BASE_DIR / "data" / "input"
-DEFAULT_OUTPUT_DIR = BASE_DIR / "data" / "output"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_DATA_DIR = PROJECT_ROOT / "data" / "input"
+DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "data" / "output"
 DEFAULT_INPUT_FILE_PATH = DEFAULT_DATA_DIR / "模拟-i输入-讲解.xlsx"
 DEFAULT_PRODUCT_DB_PATH = DEFAULT_DATA_DIR / "商品资料.xlsx"
 DEFAULT_COMBO_DB_PATH = DEFAULT_DATA_DIR / "组合资料.xlsx"
@@ -15,7 +14,6 @@ PROCESS_COLUMNS = [
     "组合是否存在",
     "倍数前",
     "倍数后",
-    "组合商品名称",
 ]
 
 
@@ -26,10 +24,6 @@ class ExcelDataService:
         self.combo_db_path = DEFAULT_COMBO_DB_PATH
         self.product_df = None
         self.combo_df = None
-
-    @staticmethod
-    def _string_or_empty(value):
-        return str(value) if pd.notna(value) else ""
 
     @staticmethod
     def _parse_multiplier_codes(code_series):
@@ -89,58 +83,6 @@ class ExcelDataService:
 
         df["倍数前"] = base_codes.loc[df.index]
         df["倍数后"] = multiplier_codes.loc[df.index]
-
-        base_codes = df["倍数前"]
-        has_product = base_codes.isin(product_codes)
-        has_quantity_column = "数量(pcs)" in product_lookup.columns
-
-        def get_product_text(column_name):
-            if column_name not in product_lookup.columns:
-                return pd.Series("", index=df.index, dtype="object")
-
-            values = base_codes.map(product_lookup[column_name])
-            return values.where(values.notna(), "").astype(str)
-
-        size_values = get_product_text("尺寸规格(mm)")
-        color_values = get_product_text("颜色")
-        if has_quantity_column:
-            quantity_values = base_codes.map(product_lookup["数量(pcs)"])
-        else:
-            quantity_values = pd.Series(None, index=df.index, dtype="object")
-
-        def calculate_pcs_value(found_product, quantity, multiple):
-            if not found_product or not has_quantity_column:
-                return ""
-
-            pcs_str = self._string_or_empty(quantity)
-            multiple_str = self._string_or_empty(multiple)
-            try:
-                pcs_value = float(pcs_str) if pcs_str else 0
-                multiple_value = float(multiple_str) if multiple_str else 0
-            except (TypeError, ValueError):
-                return ""
-
-            total_pcs = pcs_value * multiple_value
-            if not math.isfinite(total_pcs):
-                return None
-            return str(int(total_pcs))
-
-        pcs_values = [
-            calculate_pcs_value(found_product, quantity, multiple)
-            for found_product, quantity, multiple in zip(
-                has_product.tolist(),
-                quantity_values.tolist(),
-                df["倍数后"].tolist(),
-            )
-        ]
-        df["组合商品名称"] = [
-            "" if pcs is None else f"{size}{pcs}{color}"
-            for size, pcs, color in zip(
-                size_values.tolist(),
-                pcs_values,
-                color_values.tolist(),
-            )
-        ]
         return df
 
     @staticmethod
@@ -148,7 +90,6 @@ class ExcelDataService:
         return pd.DataFrame(
             {
                 "组合商品编码": processed_df["原始商品编码"],
-                "组合商品名称": processed_df["组合商品名称"],
                 "商品编码": processed_df["倍数前"],
                 "数量": processed_df["倍数后"],
             }
