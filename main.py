@@ -33,6 +33,18 @@ class ExcelDataService:
     def _string_or_empty(value):
         return str(value) if pd.notna(value) else ""
 
+    @staticmethod
+    def _parse_multiplier_codes(code_series):
+        source_codes = code_series.astype(str)
+        code_parts = source_codes.str.extract(r"^(.*)\*(\d+)$")
+        has_multiplier = code_parts[1].notna()
+        return (
+            source_codes,
+            has_multiplier,
+            code_parts[0].fillna(""),
+            code_parts[1].fillna(""),
+        )
+
     def _load_database(self, file_path):
         if not file_path.exists():
             return None
@@ -49,19 +61,16 @@ class ExcelDataService:
         return df
 
     def process_data(self, input_df):
-        if input_df is None:
-            raise ValueError("请先导入数据")
-        if self.product_df is None or self.combo_df is None:
-            raise ValueError("数据库未正确加载")
-
         df = input_df.copy().drop_duplicates(subset=["原始商品编码"])
-        source_codes = df["原始商品编码"].astype(str)
-        df = df[source_codes.str.contains("*", regex=False, na=False)].copy()
+        source_codes, has_multiplier, base_codes, multiplier_codes = (
+            self._parse_multiplier_codes(df["原始商品编码"])
+        )
+        df = df[has_multiplier].copy()
 
         for column in PROCESS_COLUMNS:
             df[column] = ""
 
-        source_codes = df["原始商品编码"].astype(str)
+        source_codes = source_codes[has_multiplier]
         product_lookup = self.product_df.copy()
         product_lookup["商品编码"] = product_lookup["商品编码"].astype(str)
         product_lookup = product_lookup.drop_duplicates(
@@ -83,9 +92,8 @@ class ExcelDataService:
         if df.empty:
             return df
 
-        code_parts = df["原始商品编码"].astype(str).str.rsplit("*", n=1, expand=True)
-        df["倍数前"] = code_parts[0]
-        df["倍数后"] = code_parts[1].fillna("")
+        df["倍数前"] = base_codes.loc[df.index]
+        df["倍数后"] = multiplier_codes.loc[df.index]
 
         base_codes = df["倍数前"]
         has_product = base_codes.isin(product_codes)
@@ -138,9 +146,7 @@ class ExcelDataService:
             )
         ]
         df["组合商品名称"] = [
-            ""
-            if pcs is None
-            else f"{temp_name}{size}{pcs}{color}"
+            "" if pcs is None else f"{temp_name}{size}{pcs}{color}"
             for temp_name, size, pcs, color in zip(
                 temp_names.tolist(),
                 size_values.tolist(),
